@@ -1,0 +1,7 @@
+# Day 1: Observability, Tracing, and Framework Adaptability
+
+### Observability vs. Ephemeral Print Statements
+Moving from terminal `print()` debugging to distributed tracing and structured logging transforms how system performance and failures are analyzed. Instead of ephemeral text scrolling past in the console, the Langfuse dashboard provides an explorable, persistent timeline detailing exact end-to-end execution latency, token accounting, and nested execution steps. Having machine-readable JSON logs in `app.log` paired with OpenTelemetry-instrumented spans enables historical error diagnosis and usage auditing that terminal prints cannot support.
+
+### Navigating Framework Volatility
+Encountering a major breaking change between Langfuse v2/v3 and v4—specifically shifting from manual trace instances (`langfuse.trace()`) to an OpenTelemetry-native architecture using `@observe()` and `langfuse.update_current_span()`—highlights the instability of the current AI tooling ecosystem. Relying solely on tutorial code or third-party wrappers creates technical debt when SDKs undergo major rewrites. To build resilient production systems, engineering teams must pin library versions defensively, decouple core business logic from tracing wrappers, and lean into open instrumentation standards (such as OpenTelemetry) to avoid tight vendor lock-in.
