@@ -23,3 +23,23 @@ To defend against adversarial inputs that evade regex heuristics, production arc
 1. **Semantic Classification (Dual-LLM / Guard Models):** Running input through a fast, lightweight evaluator model (or embedding classifier) fine-tuned specifically to detect intent to manipulate or extract system instructions.
 2. **Structural Sandboxing:** Isolating untrusted data using strict delimiters (e.g., XML/JSON encodings) and enforcing parameter contracts with tool-calling schemas rather than relying on natural language compliance.
 3. **Auditing without Blocking:** Validating that non-adversarial sensitive items (like PII in user-submitted documents) trigger structured warnings and telemetry rather than breaking legitimate user workflows.
+
+---
+
+# Day 3: Two-Layer Caching (Exact + Semantic) and Response Streaming
+
+### Cache Hit Rates & Performance Telemetry
+In testing a 4-query sequence across exact repeats, semantic paraphrases, and fresh queries, **50% of queries were resolved entirely from cache** without invoking the LLM:
+* Query 1 (`What is retrieval augmented generation?`): LLM Streamed
+* Query 2 (`What is retrieval augmented generation?`): Exact Cache hit (`1.0` match, 0 latency)
+* Query 3 (`Explain retrieval augmented generation to me.`): Semantic Cache hit (`0.905` similarity)
+* Query 4 (`What are the main functions of a car alternator?`): LLM Streamed
+
+### Acronym vs. Semantic Representation (Threshold Findings)
+When probing similarity thresholds with `all-MiniLM-L6-v2`:
+- Pure semantic rephrasing (`Explain retrieval augmented generation to me.`) matched the seed query with **0.9052** similarity, cleanly clearing our threshold.
+- However, comparing the bare acronym (`What is RAG?`) against the expanded phrase yielded only **0.1366** similarity. Because general-purpose embedding models tokenize "RAG" as standard vocabulary (cloth/rag) rather than the computer science acronym, domain acronym expansion or domain-fine-tuned embeddings are necessary for acronym-heavy production retrieval.
+- Setting `semantic_threshold = 0.85` provided the ideal boundary: reliably accepting genuine conceptual paraphrases ($>0.90$) while cleanly rejecting unrelated queries (scoring near $-0.01$).
+
+### Streaming vs. Perceived Latency
+While response streaming does not alter the overall compute time required to produce complete completions, it drops Time-To-First-Token (TTFT) to hundreds of milliseconds. Accumulating tokens during stream iteration enables immediate client feedback while populating both `TTLCache` and `SemanticCache` upon stream completion.
