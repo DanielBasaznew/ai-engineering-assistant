@@ -6,6 +6,7 @@ from logger import log
 # Standard format: {model_name: {"input": price_per_1M, "output": price_per_1M}}
 MODEL_COSTS_PER_MILLION = {
     "gemini-3.1-flash-lite": {"input": 0.075, "output": 0.30},
+    "gemini-2.5-flash": {"input": 0.075, "output": 0.30},
     "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
     "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
     # OpenAI & Groq fallbacks

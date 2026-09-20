@@ -1,23 +1,37 @@
 """
-Core AI Engineering Assistant Orchestration Layer (Week 10 Day 4 - Step 3)
-Integrates ChromaDB RAG, persistent semantic/episodic memory, and tool execution.
+Core AI Engineering Assistant Orchestration Layer (Week 10 Day 4 - Step 4)
+Integrates:
+- Tools (web_search, code_executor, read_pdf, read_pdf_page)
+- ChromaDB RAG (vector_store, ingestion, chunker)
+- Persistent Memory (PersistentMemory, memory_extractor)
+- Production Layer:
+    * Input & Output Guardrails (guardrails.py)
+    * Two-Layer Exact & Semantic Caching (cache.py)
+    * OpenTelemetry Langfuse v4 Tracing (tracer.py)
+    * Structured JSON & Console Logging (logger.py)
+    * Token & Cost Tracking (cost_tracker.py)
 """
 
 import os
 import sys
+import time
 import uuid
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
+# Ensure UTF-8 console output on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
 
+load_dotenv()
+
 from google import genai
 from google.genai import types
 
+# Tool implementations
 from tools.web_search import web_search
 from tools.code_executor import execute_python
 
@@ -27,17 +41,34 @@ except ImportError:
     read_pdf = None
     read_pdf_page = None
 
+# RAG implementations
 from rag.vector_store import get_collection, search
 from rag.ingestion import ingest_pdf, ingest_text_file
 
+# Memory implementations
 from memory.memory import PersistentMemory
 from memory.memory_extractor import extract_facts_from_conversation
+
+# Production Layer implementations
+from guardrails import check_input, check_output
+from logger import log
+from tracer import langfuse, observe
+from cost_tracker import tracker, CostTracker
+from cache import app_cache, TwoLayerCache
 
 
 class Assistant:
     """
-    Core AI Engineering Assistant that orchestrates conversational responses,
-    autonomous tool execution, ChromaDB RAG retrieval, and persistent memory.
+    Production-grade AI Engineering Assistant that orchestrates:
+    - Conversational responses with Gemini
+    - Autonomous tool execution
+    - ChromaDB RAG retrieval
+    - SQLite persistent memory (semantic + episodic)
+    - Input & output boundary guardrails
+    - Two-layer exact + semantic caching
+    - OpenTelemetry distributed tracing via Langfuse v4
+    - Real-time token usage and cost accounting
+    - Structured JSON file and console logging
     """
 
     def __init__(
@@ -46,6 +77,8 @@ class Assistant:
         api_key: Optional[str] = None,
         memory_db_path: str = "assistant_memory.db",
         rag_collection: str = "knowledge_base",
+        cache: Optional[TwoLayerCache] = None,
+        cost_tracker: Optional[CostTracker] = None,
     ):
         load_dotenv()
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
@@ -60,7 +93,20 @@ class Assistant:
         self.memory = PersistentMemory(db_path=memory_db_path)
         self.session_id = f"session_{uuid.uuid4().hex[:8]}"
 
+        # Initialize Production Layer components
+        self.cache = cache or app_cache
+        self.cost_tracker = cost_tracker or tracker
+
         self.tools = self._build_tools()
+
+        log.info(
+            "Assistant initialized successfully",
+            extra={
+                "model": self.model_name,
+                "session_id": self.session_id,
+                "rag_collection": self.rag_collection,
+            },
+        )
 
     def _build_tools(self) -> List[types.Tool]:
         """
@@ -171,6 +217,7 @@ class Assistant:
             )
         ]
 
+    @observe(name="tool_execution")
     def _call_tool(self, name: str, args: Dict[str, Any]) -> str:
         """
         Central tool dispatcher. Dispatches calls to appropriate tool functions.
@@ -286,20 +333,26 @@ class Assistant:
         if ext == ".pdf":
             try:
                 chunks_count = ingest_pdf(clean_path, collection_name=self.rag_collection)
-                return (
+                msg = (
                     f"Successfully ingested PDF '{os.path.basename(clean_path)}' "
                     f"({chunks_count} chunks) into knowledge base."
                 )
+                log.info("Document ingested (PDF)", extra={"file": clean_path, "chunks": chunks_count})
+                return msg
             except Exception as e:
+                log.error(f"Failed to ingest PDF: {e}", extra={"file": clean_path, "error": str(e)})
                 return f"Error ingesting PDF '{clean_path}': {str(e)}"
         elif ext in (".txt", ".md", ".py", ".json", ".csv"):
             try:
                 chunks_count = ingest_text_file(clean_path, collection_name=self.rag_collection)
-                return (
+                msg = (
                     f"Successfully ingested text file '{os.path.basename(clean_path)}' "
                     f"({chunks_count} chunks) into knowledge base."
                 )
+                log.info("Document ingested (Text)", extra={"file": clean_path, "chunks": chunks_count})
+                return msg
             except Exception as e:
+                log.error(f"Failed to ingest text file: {e}", extra={"file": clean_path, "error": str(e)})
                 return f"Error ingesting text file '{clean_path}': {str(e)}"
         else:
             return (
@@ -313,13 +366,24 @@ class Assistant:
         """
         self.memory.memory_report()
 
+    def get_cost_summary(self) -> dict:
+        """Returns total token consumption and dollar costs recorded by the cost tracker."""
+        return self.cost_tracker.get_summary()
+
+    def flush(self) -> None:
+        """Flushes buffered Langfuse traces to Cloud."""
+        langfuse.flush()
+
+    @observe(name="assistant_chat")
     def chat(self, user_input: str, max_iterations: int = 10) -> str:
         """
-        Runs the agentic tool-use loop:
-        user input -> LLM -> tool call? -> execute tool -> send result to LLM -> loop until final response.
-        Enforces max_iterations protection against infinite tool loops.
-        Updates persistent memory after completion.
+        Production chat lifecycle:
+        User input -> Input Guardrail -> Cache Lookup -> LLM / Tool Loop ->
+        Output Guardrail -> Memory Update -> Cache Save -> Logging + Tracing + Cost -> Return.
         """
+        start_time = time.time()
+        log.info("Chat request received", extra={"user_input": user_input[:100]})
+
         # 1. Direct interactive command intercepts
         stripped = user_input.strip()
         if stripped.lower() == "memory":
@@ -330,6 +394,55 @@ class Assistant:
             path = stripped.split(" ", 1)[1].strip()
             return self.load_document(path)
 
+        if stripped.lower() == "cost":
+            summary = self.get_cost_summary()
+            return f"Cost Summary:\n{summary}"
+
+        # 2. Input Guardrail
+        input_check = check_input(user_input)
+        if not input_check.is_valid:
+            log.warning(
+                "Blocked by input guardrail",
+                extra={"reason": input_check.reason, "input": user_input[:80]},
+            )
+            langfuse.update_current_span(
+                metadata={
+                    "guardrail_blocked": True,
+                    "guardrail_stage": "input",
+                    "reason": input_check.reason,
+                }
+            )
+            return f"[BLOCKED] {input_check.reason}"
+
+        if input_check.warnings:
+            log.warning("Input guardrail warnings", extra={"warnings": input_check.warnings})
+
+        # 3. Cache Lookup
+        cached_val, cache_source, score = self.cache.get(user_input)
+        if cached_val is not None:
+            latency = time.time() - start_time
+            log.info(
+                f"Cache hit ({cache_source})",
+                extra={
+                    "source": cache_source,
+                    "score": round(score, 3),
+                    "latency_s": round(latency, 3),
+                },
+            )
+            langfuse.update_current_span(
+                metadata={
+                    "cache_hit": True,
+                    "cache_source": cache_source,
+                    "similarity_score": round(score, 3),
+                    "latency_s": round(latency, 3),
+                    "cost_usd": 0.0,
+                }
+            )
+            return cached_val
+
+        # 4. Cache Miss -> LLM / Tool Loop
+        log.info("Cache miss, executing LLM tool loop", extra={"model": self.model_name})
+
         config = types.GenerateContentConfig(
             system_instruction=self._build_system_prompt(),
             tools=self.tools,
@@ -339,55 +452,124 @@ class Assistant:
 
         contents: List[Any] = [user_input]
         final_response = ""
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_request_cost = 0.0
 
-        for iteration in range(1, max_iterations + 1):
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=config,
-            )
-
-            # Check if the model requested any tool calls
-            if response.function_calls:
-                contents.append(response.candidates[0].content)
-
-                for function_call in response.function_calls:
-                    fn_name = function_call.name
-                    fn_args = dict(function_call.args) if function_call.args else {}
-
-                    print(f"  [Tool Call] {fn_name}({fn_args})")
-                    tool_result = self._call_tool(fn_name, fn_args)
-                    print(f"  [Observation] {len(str(tool_result))} characters returned")
-
-                    contents.append(
-                        types.Part.from_function_response(
-                            name=fn_name,
-                            response={"result": str(tool_result)},
-                        )
-                    )
-            else:
-                final_response = response.text or ""
-                break
-
-        if not final_response:
-            final_response = (
-                f"Warning: Reached maximum tool iterations ({max_iterations}) without reaching a final response."
-            )
-
-        # 2. Update persistent episodic and semantic memory
         try:
-            self._update_memory(user_input, final_response)
-        except Exception as e:
-            print(f"  [Warning] Memory update encountered an error: {e}")
+            for iteration in range(1, max_iterations + 1):
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
+                )
 
-        return final_response
+                # Record token usage/cost for actual model call if metadata exists
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    p_tok = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                    c_tok = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+                    if p_tok or c_tok:
+                        step_cost = self.cost_tracker.record_usage(
+                            model=self.model_name,
+                            prompt_tokens=p_tok,
+                            completion_tokens=c_tok,
+                        )
+                        total_request_cost += step_cost
+                        total_prompt_tokens += p_tok
+                        total_completion_tokens += c_tok
+
+                # Check if the model requested any tool calls
+                if response.function_calls:
+                    contents.append(response.candidates[0].content)
+
+                    for function_call in response.function_calls:
+                        fn_name = function_call.name
+                        fn_args = dict(function_call.args) if function_call.args else {}
+
+                        log.info(
+                            f"Tool call requested: {fn_name}",
+                            extra={"tool": fn_name, "tool_args": fn_args},
+                        )
+                        print(f"  [Tool Call] {fn_name}({fn_args})")
+                        tool_result = self._call_tool(fn_name, fn_args)
+                        log.info(
+                            f"Tool executed: {fn_name}",
+                            extra={"tool": fn_name, "result_len": len(str(tool_result))},
+                        )
+                        print(f"  [Observation] {len(str(tool_result))} characters returned")
+
+                        contents.append(
+                            types.Part.from_function_response(
+                                name=fn_name,
+                                response={"result": str(tool_result)},
+                            )
+                        )
+                else:
+                    final_response = response.text or ""
+                    break
+
+            if not final_response:
+                final_response = (
+                    f"Warning: Reached maximum tool iterations ({max_iterations}) without reaching a final response."
+                )
+
+            # 5. Output Guardrail
+            output_check = check_output(final_response)
+            if not output_check.is_valid:
+                log.error("Blocked by output guardrail", extra={"reason": output_check.reason})
+                langfuse.update_current_span(
+                    metadata={
+                        "output_guardrail_blocked": True,
+                        "guardrail_stage": "output",
+                        "reason": output_check.reason,
+                    }
+                )
+                return f"[BLOCKED] {output_check.reason}"
+
+            # 6. Memory update (only for valid, unblocked turns)
+            try:
+                self._update_memory(user_input, final_response)
+            except Exception as e:
+                log.warning(f"Memory update encountered an error: {e}", extra={"error": str(e)})
+
+            # 7. Cache population (only completed, non-error, non-blocked responses)
+            self.cache.set(user_input, final_response)
+            log.info("Response cached successfully", extra={"user_input": user_input[:80]})
+
+            # 8. Logging + Tracing + Cost Tracking finalized
+            latency = time.time() - start_time
+            langfuse.update_current_span(
+                metadata={
+                    "model": self.model_name,
+                    "latency_s": round(latency, 3),
+                    "cost_usd": round(total_request_cost, 6),
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                    "total_tokens": total_prompt_tokens + total_completion_tokens,
+                }
+            )
+            log.info(
+                "Chat request completed successfully",
+                extra={
+                    "latency_s": round(latency, 3),
+                    "cost_usd": round(total_request_cost, 6),
+                    "total_tokens": total_prompt_tokens + total_completion_tokens,
+                },
+            )
+
+            return final_response
+
+        except Exception as e:
+            log.error(f"Chat request encountered an exception: {e}", extra={"error": str(e)})
+            langfuse.update_current_span(metadata={"error": str(e)})
+            raise
 
     def run(self):
         """
-        Interactive REPL loop supporting chat, 'load <path>', 'memory', and 'exit'.
+        Interactive REPL loop supporting chat, 'load <path>', 'memory', 'cost', and 'exit'.
         """
-        print("=== AI Engineering Assistant (RAG & Memory Enabled) ===")
-        print("Commands: 'memory' to view facts, 'load <file_path>' to ingest, 'exit' to quit.\n")
+        print("=== AI Engineering Assistant (Production Ready) ===")
+        print("Commands: 'memory' to view facts, 'cost' to view costs, 'load <path>' to ingest, 'exit' to quit.\n")
 
         while True:
             try:
@@ -395,13 +577,17 @@ class Assistant:
                 if not user_input:
                     continue
                 if user_input.lower() in ("exit", "quit", "q"):
+                    print("Flushing telemetry and shutting down...")
+                    self.flush()
                     print("Goodbye!")
                     break
 
                 response = self.chat(user_input)
                 print(f"\nAssistant:\n{response}")
             except KeyboardInterrupt:
-                print("\nSession ended.")
+                print("\nFlushing telemetry...")
+                self.flush()
+                print("Session ended.")
                 break
             except Exception as e:
                 print(f"Error: {e}")
