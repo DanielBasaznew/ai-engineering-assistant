@@ -197,7 +197,10 @@ if __name__ == "__main__":
     import sys
 
     print("\n--- Production Multi-Agent Research System ---")
-    user_topic = input("Enter a research topic (or press Enter for default): ").strip()
+    if len(sys.argv) > 1:
+        user_topic = " ".join(sys.argv[1:]).strip()
+    else:
+        user_topic = input("Enter a research topic (or press Enter for default): ").strip()
 
     if not user_topic:
         user_topic = "Open Source LLMs vs Proprietary Models Enterprise Adoption Trends 2025 2026"

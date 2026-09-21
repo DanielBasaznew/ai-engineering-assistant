@@ -29,7 +29,7 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 load_dotenv()
 
 from google import genai
-from google.genai import types
+from google.genai import types, errors
 
 # Tool implementations
 from tools.web_search import web_search
@@ -304,7 +304,11 @@ class Assistant:
 
         # 2. Semantic memory fact extraction
         current_facts_str = self.memory.format_for_prompt()
-        extracted_facts = extract_facts_from_conversation(user_message, current_facts_str)
+        try:
+            extracted_facts = extract_facts_from_conversation(user_message, current_facts_str)
+        except Exception as e:
+            log.warning(f"Memory fact extraction skipped due to API error: {e}")
+            extracted_facts = []
 
         for fact in extracted_facts:
             if fact.action in ["store", "update"]:
@@ -370,6 +374,58 @@ class Assistant:
         """Returns total token consumption and dollar costs recorded by the cost tracker."""
         return self.cost_tracker.get_summary()
 
+    def run_crew_review(self, topic: str) -> str:
+        """
+        Executes the Week 9 CrewAI multi-agent research & review team (Researcher, Writer, Reviewer).
+        """
+        try:
+            from agents.crew import run_research_crew
+            res = run_research_crew(topic)
+            return (
+                f"CrewAI multi-agent research run completed in {res['elapsed_time']}s.\n"
+                f"Report saved to: {res['filepath']}\n\n"
+                f"Audit Result:\n{res['output'][:500]}..."
+            )
+        except (ImportError, ModuleNotFoundError):
+            import subprocess
+            py312 = os.path.abspath("../multi-agent-week9/venv/Scripts/python.exe")
+            if os.path.exists(py312):
+                log.info(f"Delegating CrewAI execution to Python 3.12 environment", extra={"topic": topic})
+                cmd = [py312, os.path.abspath("agents/crew.py"), topic]
+                result = subprocess.run(cmd, capture_output=True, text=True, cwd=os.getcwd())
+                if result.returncode == 0:
+                    return f"CrewAI research team completed successfully!\nOutput:\n{result.stdout.strip()[-600:]}"
+                else:
+                    return f"CrewAI execution failed:\n{result.stderr.strip()}"
+            return "Error: CrewAI is not installed in the current environment and Python 3.12 venv was not found."
+
+    def _generate_with_retry(self, contents: Any, config: Any, max_retries: int = 3) -> Any:
+        """Invokes generate_content with exponential backoff on 429 rate limit errors."""
+        delay = 4.0
+        for attempt in range(max_retries):
+            try:
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=config,
+                )
+            except errors.APIError as e:
+                err_str = str(e)
+                if getattr(e, "code", None) == 429 or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    log.warning(
+                        f"Rate limit reached (429). Retrying in {delay}s (Attempt {attempt+1}/{max_retries})...",
+                        extra={"attempt": attempt + 1, "delay_s": delay},
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    raise
+        return self.client.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=config,
+        )
+
     def flush(self) -> None:
         """Flushes buffered Langfuse traces to Cloud."""
         langfuse.flush()
@@ -397,6 +453,10 @@ class Assistant:
         if stripped.lower() == "cost":
             summary = self.get_cost_summary()
             return f"Cost Summary:\n{summary}"
+
+        if stripped.lower().startswith(("crew ", "/crew ")):
+            topic = stripped.split(" ", 1)[1].strip()
+            return self.run_crew_review(topic)
 
         # 2. Input Guardrail
         input_check = check_input(user_input)
@@ -458,8 +518,7 @@ class Assistant:
 
         try:
             for iteration in range(1, max_iterations + 1):
-                response = self.client.models.generate_content(
-                    model=self.model_name,
+                response = self._generate_with_retry(
                     contents=contents,
                     config=config,
                 )
@@ -569,7 +628,7 @@ class Assistant:
         Interactive REPL loop supporting chat, 'load <path>', 'memory', 'cost', and 'exit'.
         """
         print("=== AI Engineering Assistant (Production Ready) ===")
-        print("Commands: 'memory' to view facts, 'cost' to view costs, 'load <path>' to ingest, 'exit' to quit.\n")
+        print("Commands: 'memory' to view facts, 'cost' to view costs, 'load <path>' to ingest, 'crew <topic>' to research, 'exit' to quit.\n")
 
         while True:
             try:

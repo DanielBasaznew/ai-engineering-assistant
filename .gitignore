@@ -1,4 +1,28 @@
+# Secrets & Environment
 .env
+.env.*
+
+# Python Virtual Environments
 .venv/
+venv/
+ENV/
+
+# Python Cache & Bytecode
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Telemetry & Application Logs
+*.log
 app.log
+
+# Databases & Vector Stores
+*.db
+*.sqlite3
+data/chroma_db/
+
+# Reports & Test Artifacts
+reports/
+*.pdf
+.cache/
