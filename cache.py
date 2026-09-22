@@ -13,7 +13,7 @@ INELIGIBLE_SEMANTIC_PATTERNS = [
     r"(?i)\b(use\s+python|run\s+python|execute\s+python|execute\s+code|run\s+code|code_executor|execute_python)\b",
     r"(?i)\b(calculate|compute)\s+.*(with|using|in)\s+python\b",
     r"(?i)\buse\s+code_executor\b",
-    r"(?i)\b(mcp|mcp_explain_repository|explain_repository|repository_explainer|explain\s+repo|explain\s+folder|inspect\s+folder|use\s+mcp)\b",
+    r"(?i)\b(mcp|mcp_explain_repository|explain_repository|repository_explainer|explain\s+repo|explain\s+folder|inspect\s+folder|analysis\s+.*folder|analyze\s+.*folder|analyze\s+.*file|explain\s+.*file|week\s*\d+|use\s+mcp)\b",
     # 3. Document / PDF / RAG retrieval
     r"(?i)\b(my\s+uploaded\s+document|the\s+uploaded\s+document|uploaded\s+document|the\s+loaded\s+document|my\s+document|the\s+document|the\s+pdf|uploaded\s+pdf)\b",
     r"(?i)\b(read_pdf|read_pdf_page|search_knowledge_base)\b",
