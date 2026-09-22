@@ -58,6 +58,16 @@ from tracer import langfuse, observe
 from cost_tracker import tracker, CostTracker
 from cache import app_cache, TwoLayerCache
 
+# Rich Terminal UI
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.markdown import Markdown
+from rich.text import Text
+from rich import box
+
+console = Console()
+
 
 class Assistant:
     """
@@ -389,11 +399,11 @@ class Assistant:
                     confidence="high",
                     source="user_statement",
                 )
-                print(f"  [Memory] Stored fact: '{fact.key}' -> '{fact.value}' ({fact.category})")
+                console.print(f"  [bold magenta]🧠 Memory Learned:[/bold magenta] [bold white]'{fact.key}'[/bold white] → [italic]'{fact.value}'[/italic] [dim]({fact.category})[/dim]")
             elif fact.action == "delete":
                 deleted = self.memory.delete_fact(fact.key)
                 if deleted:
-                    print(f"  [Memory] Deleted fact: '{fact.key}'")
+                    console.print(f"  [bold red]🗑️ Memory Deleted:[/bold red] [bold white]'{fact.key}'[/bold white]")
 
     def load_document(self, file_path: str) -> str:
         """
@@ -443,6 +453,35 @@ class Assistant:
         Renders a Rich table of stored persistent memory using the Week 6 implementation.
         """
         self.memory.memory_report()
+
+    def show_cost(self) -> None:
+        """
+        Renders an attractive Rich table of token consumption and costs recorded by the cost tracker.
+        """
+        summary = self.get_cost_summary()
+        table = Table(
+            title="💰 Real-Time Token Usage & Financial Cost Accounting",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold cyan",
+        )
+        table.add_column("Accounting Metric", style="cyan", no_wrap=True)
+        table.add_column("Recorded Value", style="bold green")
+
+        table.add_row("Total LLM Calls", f"{summary.get('total_calls', 0):,}")
+        table.add_row("Input (Prompt) Tokens", f"{summary.get('total_input_tokens', 0):,}")
+        table.add_row("Output (Completion) Tokens", f"{summary.get('total_output_tokens', 0):,}")
+        table.add_row("Total Tokens Consumed", f"{summary.get('total_tokens', 0):,}")
+        table.add_row("Estimated Spend (USD)", f"${summary.get('total_cost_usd', 0.0):.6f}")
+
+        breakdown = summary.get("breakdown_by_model", {})
+        if breakdown:
+            for model_name, calls in breakdown.items():
+                table.add_row(f"Model Breakdown ({model_name})", f"{calls} calls")
+
+        console.print()
+        console.print(table)
+        console.print()
 
     def get_cost_summary(self) -> dict:
         """Returns total token consumption and dollar costs recorded by the cost tracker."""
@@ -714,7 +753,7 @@ class Assistant:
                             f"Tool call requested: {fn_name}",
                             extra={"tool": fn_name, "tool_args": fn_args},
                         )
-                        print(f"  [Tool Call] {fn_name}({fn_args})")
+                        console.print(f"  [bold yellow]⚡ Tool Invocation:[/bold yellow] [bold cyan]{fn_name}[/bold cyan]([dim]{fn_args}[/dim])")
                         tool_result = self._call_tool(fn_name, fn_args)
                         last_tool_observation = str(tool_result)
 
@@ -752,7 +791,7 @@ class Assistant:
                             f"Tool executed: {fn_name}",
                             extra={"tool": fn_name, "result_len": len(str(tool_result))},
                         )
-                        print(f"  [Observation] {len(str(tool_result))} characters returned")
+                        console.print(f"  [bold green]✔ Observation:[/bold green] [dim]{len(str(tool_result)):,} characters returned[/dim]")
 
                         contents.append(
                             types.Part.from_function_response(
@@ -854,31 +893,136 @@ class Assistant:
 
     def run(self):
         """
-        Interactive REPL loop supporting chat, 'load <path>', 'memory', 'cost', and 'exit'.
+        Interactive REPL loop with rich formatting, Markdown rendering, and system panels.
         """
-        print("=== AI Engineering Assistant (Production Ready) ===")
-        print("Commands: 'memory' to view facts, 'cost' to view costs, 'load <path>' to ingest, 'crew <topic>' to research, 'exit' to quit.\n")
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        console.print()
+        console.print(
+            Panel(
+                Text.from_markup(
+                    f"[bold bright_cyan]🤖 AI Engineering Assistant[/bold bright_cyan]  [dim]|[/dim]  [bold yellow]Production Ready v1.0[/bold yellow]\n"
+                    f"[dim]Runtime Date: {now_str} • Engine: Gemini 3.1 Flash Lite • Session: {self.session_id}[/dim]\n\n"
+                    f"[green]● Guardrails Active[/green]  [dim]•[/dim]  "
+                    f"[green]● Two-Layer Cache Active[/green]  [dim]•[/dim]  "
+                    f"[green]● Persistent Memory Active[/green]  [dim]•[/dim]  "
+                    f"[green]● ChromaDB RAG Connected[/green]"
+                ),
+                box=box.ROUNDED,
+                border_style="bright_blue",
+                padding=(1, 2),
+            )
+        )
+
+        cmd_table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
+        cmd_table.add_column("Cmd", style="bold cyan")
+        cmd_table.add_column("Desc", style="dim")
+        cmd_table.add_column("Cmd2", style="bold cyan")
+        cmd_table.add_column("Desc2", style="dim")
+        cmd_table.add_row("/load <path>", "Ingest PDF/text into Vector Store", "/memory", "View long-term SQLite facts")
+        cmd_table.add_row("/crew <topic>", "Launch CrewAI multi-agent team", "/cost", "Display token usage & dollar spend")
+        cmd_table.add_row("/reset", "Clear conversation context", "/exit", "Flush Langfuse traces & quit")
+
+        console.print(
+            Panel(
+                cmd_table,
+                title="[bold yellow]⚡ Interactive Commands[/bold yellow]",
+                title_align="left",
+                border_style="blue",
+                box=box.ROUNDED,
+            )
+        )
+        console.print()
 
         while True:
             try:
-                user_input = input("\nYou: ").strip()
+                user_input = console.input("[bold bright_cyan]You ❯ [/bold bright_cyan]").strip()
                 if not user_input:
                     continue
-                if user_input.lower() in ("exit", "quit", "q"):
-                    print("Flushing telemetry and shutting down...")
+
+                if user_input.lower() in ("exit", "quit", "q", "/exit", "/quit"):
+                    console.print("\n[dim]Flushing Langfuse telemetry and closing session...[/dim]")
                     self.flush()
-                    print("Goodbye!")
+                    summary = self.get_cost_summary()
+                    console.print(
+                        Panel(
+                            f"[bold green]✔ Telemetry Flushed Successfully[/bold green]\n"
+                            f"[dim]Session Calls:[/dim] [bold white]{summary.get('total_calls', 0)}[/bold white]  [dim]•[/dim]  "
+                            f"[dim]Total Tokens:[/dim] [bold white]{summary.get('total_tokens', 0):,}[/bold white]  [dim]•[/dim]  "
+                            f"[dim]Total Spend:[/dim] [bold green]${summary.get('total_cost_usd', 0.0):.6f}[/bold green]\n\n"
+                            f"[bold cyan]Thank you for using AI Engineering Assistant. Goodbye! 👋[/bold cyan]",
+                            title="👋 Session Ended",
+                            border_style="green",
+                            box=box.ROUNDED,
+                        )
+                    )
                     break
 
-                response = self.chat(user_input)
-                print(f"\nAssistant:\n{response}")
+                if user_input.lower() in ("memory", "/memory"):
+                    self.show_memory()
+                    continue
+
+                if user_input.lower() in ("cost", "/cost"):
+                    self.show_cost()
+                    continue
+
+                if user_input.lower() in ("reset", "/reset", "clear", "/clear"):
+                    self.conversation_history = []
+                    console.print("[bold green]✔ Conversation and task context have been reset.[/bold green]\n")
+                    continue
+
+                if user_input.lower().startswith(("load ", "/load ")):
+                    path = user_input.split(" ", 1)[1].strip()
+                    with console.status(f"[bold cyan]Ingesting '{path}' into ChromaDB knowledge base...[/bold cyan]", spinner="dots"):
+                        msg = self.load_document(path)
+                    if msg.startswith("Error"):
+                        console.print(Panel(f"[bold red]{msg}[/bold red]", border_style="red", box=box.ROUNDED))
+                    else:
+                        console.print(Panel(f"[bold green]{msg}[/bold green]", border_style="green", box=box.ROUNDED))
+                    continue
+
+                if user_input.lower().startswith(("crew ", "/crew ")):
+                    topic = user_input.split(" ", 1)[1].strip()
+                    console.print(f"[bold yellow]Launching CrewAI multi-agent research team on topic:[/bold yellow] [bold white]'{topic}'[/bold white]")
+                    with console.status("[bold cyan]CrewAI agents (Researcher, Writer, Reviewer) working...[/bold cyan]", spinner="dots"):
+                        crew_res = self.run_crew_review(topic)
+                    console.print(
+                        Panel(
+                            Markdown(crew_res),
+                            title="[bold yellow]👥 CrewAI Multi-Agent Research Output[/bold yellow]",
+                            border_style="yellow",
+                            box=box.ROUNDED,
+                            padding=(1, 2),
+                        )
+                    )
+                    continue
+
+                # Standard chat turn with spinner & rich markdown rendering
+                with console.status("[bold cyan]Thinking & executing tools...[/bold cyan]", spinner="dots"):
+                    response = self.chat(user_input)
+
+                doc_info = f" • Active Document: [bold white]{self.active_document_name}[/bold white]" if self.active_document_name else ""
+                console.print()
+                console.print(
+                    Panel(
+                        Markdown(response),
+                        title="[bold cyan]🤖 AI Assistant[/bold cyan]",
+                        title_align="left",
+                        border_style="bright_blue",
+                        box=box.ROUNDED,
+                        padding=(1, 2),
+                        subtitle=f"[dim]Model: {self.model_name}{doc_info}[/dim]",
+                        subtitle_align="right",
+                    )
+                )
+                console.print()
+
             except KeyboardInterrupt:
-                print("\nFlushing telemetry...")
+                console.print("\n[dim]Flushing telemetry...[/dim]")
                 self.flush()
-                print("Session ended.")
+                console.print("[bold yellow]Session ended by user.[/bold yellow]\n")
                 break
             except Exception as e:
-                print(f"Error: {e}")
+                console.print(Panel(f"[bold red]Error:[/bold red] {e}", border_style="red", box=box.ROUNDED))
 
 
 if __name__ == "__main__":

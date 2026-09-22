@@ -5,7 +5,12 @@ Run:
 """
 
 import sys
+from rich.console import Console
+from rich.panel import Panel
+from rich import box
 from assistant import Assistant
+
+console = Console()
 
 
 def main():
@@ -13,9 +18,17 @@ def main():
         assistant = Assistant()
         assistant.run()
     except KeyboardInterrupt:
-        print("\n[Application interrupted by user. Exiting cleanly.]")
+        console.print("\n[bold yellow][!] Session interrupted by user. Exiting cleanly.[/bold yellow]")
     except Exception as e:
-        print(f"\n[Fatal Error]: {e}", file=sys.stderr)
+        console.print(
+            Panel(
+                f"[bold red]Fatal Startup Error:[/bold red] {e}",
+                title="System Error",
+                border_style="red",
+                box=box.ROUNDED,
+            ),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
