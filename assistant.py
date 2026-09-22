@@ -36,6 +36,7 @@ from google.genai import types, errors
 # Tool implementations
 from tools.web_search import web_search
 from tools.code_executor import execute_python
+from tools.mcp_client import call_mcp_tool
 
 try:
     from tools.pdf_reader import read_pdf, read_pdf_page
@@ -240,6 +241,23 @@ class Assistant:
                             required=["query"],
                         ),
                     ),
+                    types.FunctionDeclaration(
+                        name="mcp_calculate",
+                        description=(
+                            "Evaluates mathematical expressions via Model Context Protocol (MCP) using the Week 8 MCP server over stdio transport. "
+                            "Supports standard math functions (e.g. 'math.sqrt(625)', 'math.pow(2, 10)', 'math.factorial(5)')."
+                        ),
+                        parameters=types.Schema(
+                            type=types.Type.OBJECT,
+                            properties={
+                                "expression": types.Schema(
+                                    type=types.Type.STRING,
+                                    description="Mathematical expression string, e.g. 'math.sqrt(625)'",
+                                ),
+                            },
+                            required=["expression"],
+                        ),
+                    ),
                 ]
             )
         ]
@@ -257,6 +275,10 @@ class Assistant:
             elif name in ("code_executor", "execute_python"):
                 code = args.get("code", "")
                 return execute_python(code=code)
+
+            elif name in ("mcp_calculate", "calculate"):
+                expression = args.get("expression", "")
+                return call_mcp_tool("calculate", {"expression": expression})
 
             elif name == "read_pdf":
                 if read_pdf is None:
@@ -355,6 +377,7 @@ class Assistant:
             "Capabilities and Available Tools:\n"
             "- web_search: Search DuckDuckGo for live web information, current events, and fresh documentation.\n"
             "- code_executor: Run Python code in an isolated sandbox for math, data analysis, sorting, and script verification.\n"
+            "- mcp_calculate: Evaluate mathematical expressions via Model Context Protocol (MCP) server.\n"
             "- read_pdf: Inspect local PDF files to obtain metadata and document overviews.\n"
             "- read_pdf_page: Read specific pages of a local PDF document in detail.\n"
             "- search_knowledge_base: Query the internal ChromaDB vector store for indexed documents and notes.\n\n"

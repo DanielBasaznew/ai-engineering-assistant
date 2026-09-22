@@ -236,7 +236,7 @@ python test_production_integration.py
 *Output: `ALL STEP 4 VERIFICATION TESTS PASSED SUCCESSFULLY!`*
 
 ### 3. Full Capstone End-to-End Verification (16 Tests)
-Validates all 10 weeks of functionality including RAG, persistent memory, and Model Context Protocol (MCP) compatibility:
+Validates all 10 weeks of capstone functionality across tools, RAG, persistent memory, and production hardening:
 
 ```bash
 python test_full_capstone_verification.py

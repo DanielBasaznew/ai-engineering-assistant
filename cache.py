@@ -9,10 +9,11 @@ INELIGIBLE_SEMANTIC_PATTERNS = [
     # 1. Web search / fresh / dynamic
     r"(?i)\b(search(\s+the)?\s+web|web_search|browse(\s+the)?\s+web|look\s+up\s+online|google|duckduckgo)\b",
     r"(?i)\b(latest|recent|current|breaking|today|now|this\s+year|this\s+month|2026)\b",
-    # 2. Python / code execution
+    # 2. Python / code execution & MCP
     r"(?i)\b(use\s+python|run\s+python|execute\s+python|execute\s+code|run\s+code|code_executor|execute_python)\b",
     r"(?i)\b(calculate|compute)\s+.*(with|using|in)\s+python\b",
     r"(?i)\buse\s+code_executor\b",
+    r"(?i)\b(mcp|mcp_calculate|use\s+mcp)\b",
     # 3. Document / PDF / RAG retrieval
     r"(?i)\b(my\s+uploaded\s+document|the\s+uploaded\s+document|uploaded\s+document|the\s+loaded\s+document|my\s+document|the\s+document|the\s+pdf|uploaded\s+pdf)\b",
     r"(?i)\b(read_pdf|read_pdf_page|search_knowledge_base)\b",
