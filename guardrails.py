@@ -16,12 +16,19 @@ class ValidationResult(BaseModel):
 # --- Regex Patterns ---
 
 PROMPT_INJECTION_PATTERNS = [
-    r"(?i)\bignore\s+(all\s+)?(previous|prior|above)\s+(instructions|directives|prompts)\b",
+    # Instruction override / ignore variants
+    r"(?i)\b(ignore|disregard|forget|override)\s+(all\s+)?(previous|prior|above|system|internal|safety|your|initial)\s+(instructions|directives|prompts|rules|guidelines|restrictions)\b",
+    r"(?i)\bignore\s+(all\s+)?(your\s+)?(safety\s+rules|system\s+instructions)\b",
+    # Rule bypass variants
+    r"(?i)\bbypass\s+(all\s+)?(your\s+|the\s+)?(safety|security|content|guardrail)\s*(rules|guidelines|restrictions|filters|guardrails|protocols)?\b",
+    r"(?i)\bbypass\s+(your\s+)?safety\s+rules\b",
+    # Extraction of system prompt or internal instructions
+    r"(?i)\b(reveal|expose|disclose|leak|dump)\s+(all\s+)?(your\s+|the\s+)?(internal|hidden|system|confidential|secret|original|initial)?\s*(system\s+prompt|instructions|directives|rules)\b",
+    r"(?i)\b(show|print|display)\s+(your\s+|the\s+)?(system\s+prompt|internal\s+instructions|hidden\s+instructions)\b",
+    # Role play / jailbreak variants
     r"(?i)\byou\s+are\s+now\b",
-    r"(?i)\bdisregard\s+(your\s+)?(instructions|rules|guidelines)\b",
     r"(?i)\bjailbreak\b",
     r"(?i)\bDAN\s+mode\b",
-    r"(?i)\breveal\s+(your\s+)?(system\s+prompt|initial\s+instructions)\b",
     r"(?i)\bpretend\s+you\s+have\s+no\s+(rules|restrictions|limits)\b",
 ]
 
