@@ -16,6 +16,8 @@ import os
 import sys
 import time
 import uuid
+import json
+import datetime
 from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 
@@ -93,6 +95,11 @@ class Assistant:
         self.memory = PersistentMemory(db_path=memory_db_path)
         self.session_id = f"session_{uuid.uuid4().hex[:8]}"
 
+        # Initialize Active Document Tracking & Conversation/Task Context
+        self.active_document: Optional[str] = None
+        self.active_document_name: Optional[str] = None
+        self.conversation_history: List[Dict[str, str]] = []
+
         # Initialize Production Layer components
         self.cache = cache or app_cache
         self.cost_tracker = cost_tracker or tracker
@@ -117,14 +124,19 @@ class Assistant:
         - read_pdf_page
         - search_knowledge_base
         """
+        now = datetime.datetime.now()
+        current_date_str = now.strftime("%Y-%m-%d")
+        current_year = now.year
+
         return [
             types.Tool(
                 function_declarations=[
                     types.FunctionDeclaration(
                         name="web_search",
                         description=(
-                            "Searches DuckDuckGo for live web information, current events, and documentation. "
-                            "Returns numbered results with titles, URLs, and concise snippets."
+                            f"Searches DuckDuckGo for live web information, current events, and documentation. "
+                            f"Today's date is {current_date_str}. Use the current year ({current_year}) for recent or time-sensitive searches. "
+                            f"Returns numbered results with titles, URLs, and concise snippets."
                         ),
                         parameters=types.Schema(
                             type=types.Type.OBJECT,
@@ -234,13 +246,27 @@ class Assistant:
             elif name == "read_pdf":
                 if read_pdf is None:
                     return "Error: PDF reading is unavailable because PyMuPDF (fitz) is not installed."
-                file_path = args.get("file_path", "")
+                file_path = str(args.get("file_path", "")).strip()
+                # Active document fallback if file_path is missing, generic, or non-existent
+                if self.active_document and (
+                    not file_path
+                    or not os.path.exists(file_path)
+                    or file_path.lower() in ("the document", "document.pdf", "uploaded.pdf", "the_document.pdf", "pdf", "file")
+                ):
+                    file_path = self.active_document
                 return read_pdf(file_path=file_path)
 
             elif name == "read_pdf_page":
                 if read_pdf_page is None:
                     return "Error: PDF page reading is unavailable because PyMuPDF (fitz) is not installed."
-                file_path = args.get("file_path", "")
+                file_path = str(args.get("file_path", "")).strip()
+                # Active document fallback if file_path is missing, generic, or non-existent
+                if self.active_document and (
+                    not file_path
+                    or not os.path.exists(file_path)
+                    or file_path.lower() in ("the document", "document.pdf", "uploaded.pdf", "the_document.pdf", "pdf", "file")
+                ):
+                    file_path = self.active_document
                 page_number = int(args.get("page_number", 1))
                 return read_pdf_page(file_path=file_path, page_number=page_number)
 
@@ -272,13 +298,29 @@ class Assistant:
     def _build_system_prompt(self) -> str:
         """
         Constructs the base system prompt including role, tool contracts,
-        and dynamically injected persistent memory facts.
+        runtime date awareness, active loaded document, and persistent memory facts.
         """
         facts_block = self.memory.format_for_prompt()
+        now = datetime.datetime.now()
+        current_date_str = now.strftime("%Y-%m-%d")
+        current_year = now.year
+
+        active_doc_block = ""
+        if self.active_document:
+            active_doc_block = (
+                f"Active Document in Current Session:\n"
+                f"- Canonical Path: {self.active_document}\n"
+                f"- Filename: {self.active_document_name}\n"
+                f"When the user refers to 'the document', 'the PDF', 'my uploaded document', or 'the file I just loaded', "
+                f"strictly use this active document path ('{self.active_document}') for tools like read_pdf, read_pdf_page, "
+                f"or search_knowledge_base. Never invent or guess a filename.\n\n"
+            )
 
         return (
             "You are an AI Engineering Assistant, a reliable and skilled technical assistant.\n\n"
+            f"Current Runtime Date: {current_date_str} (Year: {current_year})\n\n"
             f"{facts_block}\n\n"
+            f"{active_doc_block}"
             "Capabilities and Available Tools:\n"
             "- web_search: Search the live web for recent developments, documentation, and factual verification.\n"
             "- code_executor: Run Python code in an isolated sandbox for math, data analysis, and script verification.\n"
@@ -286,12 +328,15 @@ class Assistant:
             "- read_pdf_page: Read specific pages of a local PDF document in detail.\n"
             "- search_knowledge_base: Query the internal vector store for indexed documents and notes.\n\n"
             "Operating Rules:\n"
-            "1. When answering questions, use any personal context and facts above to tailor your response.\n"
-            "2. DO NOT explicitly reference 'my database', 'stored memory', or 'system records'. Respond naturally.\n"
-            "3. Use tools whenever external facts, live data, calculations, or document inspections are required.\n"
-            "4. Never fabricate or invent tool outputs. Ground all claims strictly on tool observations.\n"
-            "5. If a tool reports an error or returns empty results, reason through alternative strategies or clearly inform the user.\n"
-            "6. Provide clear, concise, and structured answers."
+            f"1. When interpreting time-sensitive terms ('latest', 'recent', 'current', 'today', 'this year'), "
+            f"strictly use the current runtime date ({current_date_str}) and year ({current_year}). "
+            f"Never assume or hardcode outdated years (such as 2024 or 2025) into search queries or answers.\n"
+            "2. When answering questions, use any personal context and facts above to tailor your response.\n"
+            "3. DO NOT explicitly reference 'my database', 'stored memory', or 'system records'. Respond naturally.\n"
+            "4. Use tools whenever external facts, live data, calculations, or document inspections are required.\n"
+            "5. Never fabricate or invent tool outputs. Ground all claims strictly on tool observations.\n"
+            "6. If a tool reports an error or returns empty results, reason through alternative strategies or clearly inform the user.\n"
+            "7. Provide clear, concise, and structured answers."
         )
 
     def _update_memory(self, user_message: str, assistant_message: str) -> None:
@@ -337,6 +382,8 @@ class Assistant:
         if ext == ".pdf":
             try:
                 chunks_count = ingest_pdf(clean_path, collection_name=self.rag_collection)
+                self.active_document = os.path.abspath(clean_path)
+                self.active_document_name = os.path.basename(clean_path)
                 msg = (
                     f"Successfully ingested PDF '{os.path.basename(clean_path)}' "
                     f"({chunks_count} chunks) into knowledge base."
@@ -349,6 +396,8 @@ class Assistant:
         elif ext in (".txt", ".md", ".py", ".json", ".csv"):
             try:
                 chunks_count = ingest_text_file(clean_path, collection_name=self.rag_collection)
+                self.active_document = os.path.abspath(clean_path)
+                self.active_document_name = os.path.basename(clean_path)
                 msg = (
                     f"Successfully ingested text file '{os.path.basename(clean_path)}' "
                     f"({chunks_count} chunks) into knowledge base."
@@ -454,6 +503,10 @@ class Assistant:
             summary = self.get_cost_summary()
             return f"Cost Summary:\n{summary}"
 
+        if stripped.lower() in ("reset", "/reset", "clear", "/clear"):
+            self.conversation_history = []
+            return "Conversation and task context reset."
+
         if stripped.lower().startswith(("crew ", "/crew ")):
             topic = stripped.split(" ", 1)[1].strip()
             return self.run_crew_review(topic)
@@ -510,14 +563,40 @@ class Assistant:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
-        contents: List[Any] = [user_input]
+        # Build contents incorporating lightweight conversation/task history
+        contents: List[Any] = []
+        for turn in self.conversation_history[-6:]:
+            contents.append(
+                types.Content(
+                    role=turn["role"],
+                    parts=[types.Part.from_text(text=turn["text"])],
+                )
+            )
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=user_input)],
+            )
+        )
+
         final_response = ""
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_request_cost = 0.0
 
+        tool_calls_history: Dict[str, int] = {}
+        web_search_attempts = 0
+        max_search_attempts = 3
+        consecutive_tool_failures = 0
+        loop_stopped_reason = ""
+        last_tool_observation = ""
+        should_break_loop = False
+
         try:
             for iteration in range(1, max_iterations + 1):
+                if should_break_loop:
+                    break
+
                 response = self._generate_with_retry(
                     contents=contents,
                     config=config,
@@ -545,12 +624,105 @@ class Assistant:
                         fn_name = function_call.name
                         fn_args = dict(function_call.args) if function_call.args else {}
 
+                        # Normalize argument signature
+                        if fn_name == "web_search":
+                            arg_sig = str(fn_args.get("query", "")).lower().strip()
+                        else:
+                            arg_sig = json.dumps(fn_args, sort_keys=True).lower()
+                        call_key = f"{fn_name}:{arg_sig}"
+
+                        # Check web search attempt limit
+                        if fn_name == "web_search":
+                            web_search_attempts += 1
+                            if web_search_attempts > max_search_attempts:
+                                loop_stopped_reason = "repeated tool call"
+                                log.warning(
+                                    "Tool loop terminated: repeated tool call",
+                                    extra={
+                                        "reason": "Max web search attempts reached",
+                                        "attempts": web_search_attempts,
+                                        "query": fn_args.get("query", ""),
+                                    },
+                                )
+                                tool_result = (
+                                    f"[Tool Guard] Maximum web search limit ({max_search_attempts} attempts) reached for this request. "
+                                    f"Synthesize your final response now using previously gathered information."
+                                )
+                                contents.append(
+                                    types.Part.from_function_response(
+                                        name=fn_name,
+                                        response={"result": tool_result},
+                                    )
+                                )
+                                should_break_loop = True
+                                break
+
+                        # Check for repeated identical tool calls
+                        call_count = tool_calls_history.get(call_key, 0) + 1
+                        tool_calls_history[call_key] = call_count
+
+                        if call_count >= 2:
+                            loop_stopped_reason = "repeated tool call"
+                            log.warning(
+                                "Tool loop terminated: repeated tool call",
+                                extra={
+                                    "tool": fn_name,
+                                    "tool_args": fn_args,
+                                    "call_count": call_count,
+                                },
+                            )
+                            tool_result = (
+                                f"[Tool Guard] Tool '{fn_name}' was already called with identical arguments. "
+                                f"To prevent an unconstructive loop, repeated calls are blocked. "
+                                f"Formulate your final response immediately using the information already retrieved."
+                            )
+                            contents.append(
+                                types.Part.from_function_response(
+                                    name=fn_name,
+                                    response={"result": tool_result},
+                                )
+                            )
+                            should_break_loop = True
+                            break
+
                         log.info(
                             f"Tool call requested: {fn_name}",
                             extra={"tool": fn_name, "tool_args": fn_args},
                         )
                         print(f"  [Tool Call] {fn_name}({fn_args})")
                         tool_result = self._call_tool(fn_name, fn_args)
+                        last_tool_observation = str(tool_result)
+
+                        # Check for repeated failure
+                        is_error = (
+                            str(tool_result).startswith("Error:")
+                            or "Error executing" in str(tool_result)
+                            or "attempt failed" in str(tool_result)
+                        )
+                        if is_error:
+                            consecutive_tool_failures += 1
+                        else:
+                            consecutive_tool_failures = 0
+
+                        if consecutive_tool_failures >= 3:
+                            loop_stopped_reason = "tool failure"
+                            log.warning(
+                                "Tool loop terminated: tool failure",
+                                extra={
+                                    "tool": fn_name,
+                                    "consecutive_failures": consecutive_tool_failures,
+                                    "last_error": str(tool_result)[:100],
+                                },
+                            )
+                            contents.append(
+                                types.Part.from_function_response(
+                                    name=fn_name,
+                                    response={"result": str(tool_result)},
+                                )
+                            )
+                            should_break_loop = True
+                            break
+
                         log.info(
                             f"Tool executed: {fn_name}",
                             extra={"tool": fn_name, "result_len": len(str(tool_result))},
@@ -567,10 +739,38 @@ class Assistant:
                     final_response = response.text or ""
                     break
 
-            if not final_response:
-                final_response = (
-                    f"Warning: Reached maximum tool iterations ({max_iterations}) without reaching a final response."
+            if iteration >= max_iterations and not final_response:
+                loop_stopped_reason = "maximum iterations"
+                log.warning(
+                    "Tool loop terminated: maximum iterations reached",
+                    extra={"iterations": iteration, "max_iterations": max_iterations},
                 )
+
+            # Fallback response generation when loop stopped without model final text
+            if not final_response:
+                if loop_stopped_reason == "tool failure":
+                    final_response = (
+                        f"I encountered repeated errors while attempting to execute the required tools. "
+                        f"Latest observation: {last_tool_observation[:200]}"
+                    )
+                elif loop_stopped_reason == "repeated tool call":
+                    if last_tool_observation and "No relevant web search results found" in last_tool_observation:
+                        final_response = (
+                            f"I attempted to search for the requested information, but search queries yielded no results. "
+                            f"Based on available verified knowledge, no further details could be retrieved."
+                        )
+                    else:
+                        final_response = (
+                            f"The search or tool operations completed without yielding new information. "
+                            f"Available findings: {last_tool_observation[:300]}"
+                        )
+                elif loop_stopped_reason == "maximum iterations":
+                    final_response = (
+                        f"Reached maximum tool iterations ({max_iterations}) without reaching a final response. "
+                        f"Observations collected: {last_tool_observation[:300]}"
+                    )
+                else:
+                    final_response = "Unable to complete request with current tool observations."
 
             # 5. Output Guardrail
             output_check = check_output(final_response)
@@ -590,6 +790,10 @@ class Assistant:
                 self._update_memory(user_input, final_response)
             except Exception as e:
                 log.warning(f"Memory update encountered an error: {e}", extra={"error": str(e)})
+
+            # Update conversation/task context (separate from long-term memory)
+            self.conversation_history.append({"role": "user", "text": user_input})
+            self.conversation_history.append({"role": "model", "text": final_response})
 
             # 7. Cache population (only completed, non-error, non-blocked responses)
             self.cache.set(user_input, final_response)
