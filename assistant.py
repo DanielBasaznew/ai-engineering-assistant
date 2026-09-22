@@ -242,20 +242,21 @@ class Assistant:
                         ),
                     ),
                     types.FunctionDeclaration(
-                        name="mcp_calculate",
+                        name="mcp_explain_repository",
                         description=(
-                            "Evaluates mathematical expressions via Model Context Protocol (MCP) using the Week 8 MCP server over stdio transport. "
-                            "Supports standard math functions (e.g. 'math.sqrt(625)', 'math.pow(2, 10)', 'math.factorial(5)')."
+                            "Explains a directory, folder, or repository structure using the Week 8 Model Context Protocol (MCP) server over stdio transport. "
+                            "Inspects all files, summarizes each file's purpose, flags potential syntax errors or anti-patterns, "
+                            "and provides actionable recommendations and best practices."
                         ),
                         parameters=types.Schema(
                             type=types.Type.OBJECT,
                             properties={
-                                "expression": types.Schema(
+                                "path": types.Schema(
                                     type=types.Type.STRING,
-                                    description="Mathematical expression string, e.g. 'math.sqrt(625)'",
+                                    description="Directory or folder path to inspect and explain (e.g. '.', 'rag', 'tools', or an absolute path).",
                                 ),
                             },
-                            required=["expression"],
+                            required=["path"],
                         ),
                     ),
                 ]
@@ -275,6 +276,10 @@ class Assistant:
             elif name in ("code_executor", "execute_python"):
                 code = args.get("code", "")
                 return execute_python(code=code)
+
+            elif name in ("mcp_explain_repository", "explain_repository"):
+                path = args.get("path", ".")
+                return call_mcp_tool("explain_repository", {"path": path})
 
             elif name in ("mcp_calculate", "calculate"):
                 expression = args.get("expression", "")
@@ -377,7 +382,7 @@ class Assistant:
             "Capabilities and Available Tools:\n"
             "- web_search: Search DuckDuckGo for live web information, current events, and fresh documentation.\n"
             "- code_executor: Run Python code in an isolated sandbox for math, data analysis, sorting, and script verification.\n"
-            "- mcp_calculate: Evaluate mathematical expressions via Model Context Protocol (MCP) server.\n"
+            "- mcp_explain_repository: Inspect and explain a directory/repository, file inventory, and best practices via Week 8 MCP server.\n"
             "- read_pdf: Inspect local PDF files to obtain metadata and document overviews.\n"
             "- read_pdf_page: Read specific pages of a local PDF document in detail.\n"
             "- search_knowledge_base: Query the internal ChromaDB vector store for indexed documents and notes.\n\n"
