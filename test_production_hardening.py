@@ -43,7 +43,7 @@ from tools.web_search import web_search
 
 def run_all_hardening_tests():
     print("=" * 75)
-    print("RUNNING PRODUCTION HARDENING REGRESSION SUITE (14 TESTS)")
+    print("RUNNING PRODUCTION HARDENING REGRESSION SUITE (18 TESTS)")
     print("=" * 75)
 
     test_db = "test_hardening_memory.db"
@@ -387,6 +387,132 @@ def run_all_hardening_tests():
     print(f"Result: {results['14_telemetry_cost_logging']['status']} - {results['14_telemetry_cost_logging']['detail']}")
     assert pass14, "Test 14 failed: Telemetry, cost accounting, or logging incomplete."
 
+    # ----------------------------------------------------
+    # Test 15: Semantic Cache Ineligibility for Dynamic/Tool Queries
+    # ----------------------------------------------------
+    print("\n--- Test 15: Semantic Cache Ineligibility ---")
+    from cache import is_semantic_cache_eligible
+    stress_prompt = (
+        "Search the web for the latest developments in agentic AI in 2026. "
+        "Then compare those developments with the information in my uploaded document. "
+        "Use Python if you need to calculate or organize anything. "
+        "Give me a concise report with the key findings, and clearly distinguish "
+        "information from my document from information found on the web."
+    )
+    # The stress prompt must be ineligible for semantic cache
+    stress_eligible = is_semantic_cache_eligible(stress_prompt)
+    cached_val, cache_type, _ = assistant.cache.get(stress_prompt)
+
+    # General conceptual questions must remain eligible
+    rag_eligible = is_semantic_cache_eligible("What is RAG?")
+    python_slicing_eligible = is_semantic_cache_eligible("How do I reverse a string in Python using slice syntax?")
+
+    pass15 = (
+        not stress_eligible
+        and cached_val is None
+        and rag_eligible
+        and python_slicing_eligible
+    )
+    results["15_semantic_cache_ineligibility"] = {
+        "status": "PASS" if pass15 else "FAIL",
+        "detail": f"Stress prompt is ineligible (eligible={stress_eligible}, cache_val={cached_val}), conceptual queries are eligible.",
+    }
+    print(f"Result: {results['15_semantic_cache_ineligibility']['status']} - {results['15_semantic_cache_ineligibility']['detail']}")
+    assert pass15, "Test 15 failed: Semantic cache eligibility filter incorrect."
+
+    # ----------------------------------------------------
+    # Test 16: Web Search Restraint on Conceptual Queries
+    # ----------------------------------------------------
+    print("\n--- Test 16: Web Search Restraint on Conceptual Queries ---")
+    tokens_before = assistant.get_cost_summary()["total_tokens"]
+    # Clear conversation history to test clean turn
+    assistant.conversation_history = []
+
+    resp16 = assistant.chat("What is RAG?")
+    print("RAG response preview:", resp16[:120])
+
+    # Check app.log to verify web_search was NOT called for "What is RAG?"
+    with open("app.log", "r", encoding="utf-8") as f:
+        log_lines = f.readlines()
+    last_logs = [json.loads(l) for l in log_lines[-15:] if l.strip()]
+    web_search_called_for_rag = any(
+        entry.get("extra", {}).get("tool") == "web_search"
+        and "rag" in str(entry.get("extra", {}).get("tool_args", "")).lower()
+        for entry in last_logs
+    )
+
+    pass16 = (
+        len(resp16) > 50
+        and not web_search_called_for_rag
+        and ("Retrieval" in resp16 or "Augmented" in resp16 or "generation" in resp16.lower())
+    )
+    results["16_web_search_restraint"] = {
+        "status": "PASS" if pass16 else "FAIL",
+        "detail": f"Answered 'What is RAG?' directly without invoking web_search (called={web_search_called_for_rag}).",
+    }
+    print(f"Result: {results['16_web_search_restraint']['status']} - {results['16_web_search_restraint']['detail']}")
+    assert pass16, "Test 16 failed: Web search was unnecessarily invoked for conceptual query."
+
+    # ----------------------------------------------------
+    # Test 17: Redundant Document Tool Restraint & No Hallucinated Filenames
+    # ----------------------------------------------------
+    print("\n--- Test 17: Document Tool Restraint & No Hallucinated Filenames ---")
+    # When no active document is loaded, speculative file paths must return clean error without looping
+    assistant.active_document = None
+    assistant.active_document_name = None
+    doc_err = assistant._call_tool("read_pdf", {"file_path": "Filler_Machine_Assignment.pdf"})
+    print("Call tool on hallucinated file output:", doc_err)
+
+    # When active document IS set, fallback uses active document instead of failing
+    assistant.active_document = os.path.abspath(test_pdf)
+    assistant.active_document_name = os.path.basename(test_pdf)
+    fallback_res = assistant._call_tool("read_pdf", {"file_path": "Filler_Machine_Assignment.pdf"})
+    print("Call tool with active document fallback preview:", fallback_res[:100])
+
+    pass17 = (
+        "does not exist and no active document is currently loaded" in doc_err
+        and ("PDF DOCUMENT OVERVIEW" in fallback_res or "Total Pages:" in fallback_res)
+    )
+    results["17_document_tool_restraint"] = {
+        "status": "PASS" if pass17 else "FAIL",
+        "detail": "Blocked hallucinated filenames cleanly when unloaded; redirected to active document when loaded.",
+    }
+    print(f"Result: {results['17_document_tool_restraint']['status']} - {results['17_document_tool_restraint']['detail']}")
+    assert pass17, "Test 17 failed: Document tool did not safely guard against hallucinated filenames."
+
+    # ----------------------------------------------------
+    # Test 18: End-to-End Hardening Stress Prompt
+    # ----------------------------------------------------
+    print("\n--- Test 18: End-to-End Hardening Stress Prompt ---")
+    # Ingest test_pdf with specific internal architecture facts
+    assistant.load_document(test_pdf)
+    assistant.conversation_history = []
+
+    stress_resp = assistant.chat(stress_prompt, max_iterations=6)
+    print("\nStress Prompt Final Response:\n" + "=" * 60)
+    print(stress_resp)
+    print("=" * 60)
+
+    # Verify key expectations:
+    # 1. Bypassed cache (already checked in Test 15)
+    # 2. Output is substantive and structured
+    # 3. Contains distinctions between web and document
+    has_distinction = (
+        ("document" in stress_resp.lower() or "uploaded" in stress_resp.lower() or "internal" in stress_resp.lower())
+        and ("web" in stress_resp.lower() or "2026" in stress_resp.lower() or "search" in stress_resp.lower())
+    )
+    pass18 = (
+        len(stress_resp) > 100
+        and not stress_resp.startswith("[BLOCKED]")
+        and has_distinction
+    )
+    results["18_stress_prompt_execution"] = {
+        "status": "PASS" if pass18 else "FAIL",
+        "detail": f"Executed multi-step stress workflow; produced structured report distinguishing web from document ({len(stress_resp)} chars).",
+    }
+    print(f"Result: {results['18_stress_prompt_execution']['status']} - {results['18_stress_prompt_execution']['detail']}")
+    assert pass18, "Test 18 failed: Stress prompt did not produce expected comparative report."
+
     # Clean up test artifacts
     for f in [test_db, test_pdf]:
         if os.path.exists(f):
@@ -396,14 +522,14 @@ def run_all_hardening_tests():
                 pass
 
     print("\n" + "=" * 75)
-    print("FINAL SUMMARY OF ALL 14 PRODUCTION HARDENING REGRESSION TESTS")
+    print("FINAL SUMMARY OF ALL 18 PRODUCTION HARDENING REGRESSION TESTS")
     print("=" * 75)
     all_passed = all(v["status"] == "PASS" for v in results.values())
     for k, v in results.items():
         print(f"[{v['status']}] {k:35} : {v['detail']}")
 
     print("\n" + "=" * 75)
-    print(f"OVERALL RESULT: {'ALL 14 TESTS PASSED' if all_passed else 'SOME TESTS FAILED'}")
+    print(f"OVERALL RESULT: {'ALL 18 TESTS PASSED' if all_passed else 'SOME TESTS FAILED'}")
     print("=" * 75)
     return results
 
