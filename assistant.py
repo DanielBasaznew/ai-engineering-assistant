@@ -244,8 +244,10 @@ class Assistant:
                     types.FunctionDeclaration(
                         name="mcp_explain_repository",
                         description=(
-                            "Explains a directory, folder, or repository structure using the Week 8 Model Context Protocol (MCP) server over stdio transport. "
-                            "Inspects all files, summarizes each file's purpose, flags potential syntax errors or anti-patterns, "
+                            "Inspects and explains any file or folder/directory location using the Week 8 Model Context Protocol (MCP) server over stdio transport. "
+                            "Works for both single files (e.g. 'main.py', 'rag/chunker.py') and folders/repositories "
+                            "(e.g. '.', 'rag', 'tools', 'week 9', '../multi-agent-week9', 'week 8', or any absolute path). "
+                            "Summarizes code purpose, detects potential syntax errors or anti-patterns, "
                             "and provides actionable recommendations and best practices."
                         ),
                         parameters=types.Schema(
@@ -253,7 +255,7 @@ class Assistant:
                             properties={
                                 "path": types.Schema(
                                     type=types.Type.STRING,
-                                    description="Directory or folder path to inspect and explain (e.g. '.', 'rag', 'tools', or an absolute path).",
+                                    description="Path or name of the file or folder to inspect (e.g. '.', 'rag', 'week 9', '../multi-agent-week9', 'main.py').",
                                 ),
                             },
                             required=["path"],
@@ -399,7 +401,8 @@ class Assistant:
             "4. Personal Context: Use stored facts naturally without explicitly referencing 'my database', 'stored memory', or 'system records'.\n"
             "5. Tool Grounding: Ground all claims strictly on actual tool observations. Never fabricate tool outputs.\n"
             "6. Error Recovery: If a tool reports an error or returns empty results, do not loop through speculative calls; reason cleanly or inform the user.\n"
-            "7. Clarity: Provide structured, concise, and clear answers."
+            "7. Clarity: Provide structured, concise, and clear answers.\n"
+            "8. File and Folder Inspection via MCP: When the user asks to analyze, explain, or inspect any folder or file (e.g. 'rag', 'tools', 'week 9', 'week 8', or any relative/absolute path), invoke mcp_explain_repository with the requested path.\n"
         )
 
     def _update_memory(self, user_message: str, assistant_message: str) -> None:
