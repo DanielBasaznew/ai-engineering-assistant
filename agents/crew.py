@@ -7,9 +7,9 @@ from crewai import Agent, Crew, Process, Task, LLM
 from crewai.tools import tool
 
 try:
-    from duckduckgo_search import DDGS
-except ImportError:
     from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 load_dotenv()
 
