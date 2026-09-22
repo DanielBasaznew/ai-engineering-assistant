@@ -134,9 +134,11 @@ class Assistant:
                     types.FunctionDeclaration(
                         name="web_search",
                         description=(
-                            f"Searches DuckDuckGo for live web information, current events, and documentation. "
+                            f"Searches DuckDuckGo for live external web information, current events, breaking developments, and live documentation. "
                             f"Today's date is {current_date_str}. Use the current year ({current_year}) for recent or time-sensitive searches. "
-                            f"Returns numbered results with titles, URLs, and concise snippets."
+                            f"DO NOT call this tool for general conceptual, historical, foundational, or programming questions "
+                            f"(such as 'What is RAG?', 'Explain Python dictionaries', 'How does HTTP work?') that you can answer directly from internal knowledge. "
+                            f"Call this tool ONLY when the user explicitly requests web searching or when fresh, current real-time external data is genuinely required."
                         ),
                         parameters=types.Schema(
                             type=types.Type.OBJECT,
@@ -171,7 +173,8 @@ class Assistant:
                         name="read_pdf",
                         description=(
                             "Extracts document metadata and the first 3000 characters of text from a local PDF file. "
-                            "Use to obtain a high-level overview of a PDF document."
+                            "Use to obtain a high-level overview of a PDF document. "
+                            "Do NOT invent or guess filenames. If an active document is loaded, use its canonical path or use search_knowledge_base."
                         ),
                         parameters=types.Schema(
                             type=types.Type.OBJECT,
@@ -187,7 +190,8 @@ class Assistant:
                     types.FunctionDeclaration(
                         name="read_pdf_page",
                         description=(
-                            "Extracts complete text from a single specific 1-indexed page of a local PDF document."
+                            "Extracts complete text from a single specific 1-indexed page of a local PDF document. "
+                            "Do NOT invent or guess filenames. If an active document is loaded, use its canonical path."
                         ),
                         parameters=types.Schema(
                             type=types.Type.OBJECT,
@@ -208,7 +212,8 @@ class Assistant:
                         name="search_knowledge_base",
                         description=(
                             "Searches the private ChromaDB vector database for indexed internal documents and notes. "
-                            "Returns semantically relevant passages and similarity scores."
+                            "Returns semantically relevant passages and similarity scores. "
+                            "Use this as the primary retrieval tool for querying ingested documents."
                         ),
                         parameters=types.Schema(
                             type=types.Type.OBJECT,
@@ -254,6 +259,11 @@ class Assistant:
                     or file_path.lower() in ("the document", "document.pdf", "uploaded.pdf", "the_document.pdf", "pdf", "file")
                 ):
                     file_path = self.active_document
+                elif not os.path.exists(file_path) and not self.active_document:
+                    return (
+                        f"Error: File '{file_path}' does not exist and no active document is currently loaded. "
+                        f"Please use '/load <path>' to load your document or use search_knowledge_base to query indexed documents."
+                    )
                 return read_pdf(file_path=file_path)
 
             elif name == "read_pdf_page":
@@ -267,6 +277,11 @@ class Assistant:
                     or file_path.lower() in ("the document", "document.pdf", "uploaded.pdf", "the_document.pdf", "pdf", "file")
                 ):
                     file_path = self.active_document
+                elif not os.path.exists(file_path) and not self.active_document:
+                    return (
+                        f"Error: File '{file_path}' does not exist and no active document is currently loaded. "
+                        f"Please use '/load <path>' to load your document or use search_knowledge_base to query indexed documents."
+                    )
                 page_number = int(args.get("page_number", 1))
                 return read_pdf_page(file_path=file_path, page_number=page_number)
 
@@ -312,8 +327,14 @@ class Assistant:
                 f"- Canonical Path: {self.active_document}\n"
                 f"- Filename: {self.active_document_name}\n"
                 f"When the user refers to 'the document', 'the PDF', 'my uploaded document', or 'the file I just loaded', "
-                f"strictly use this active document path ('{self.active_document}') for tools like read_pdf, read_pdf_page, "
-                f"or search_knowledge_base. Never invent or guess a filename.\n\n"
+                f"use this active document path ('{self.active_document}') for tools like read_pdf / read_pdf_page, "
+                f"or use search_knowledge_base to query its contents. Never invent or guess an alternative filename.\n\n"
+            )
+        else:
+            active_doc_block = (
+                "No active document is currently loaded in this session. "
+                "Do NOT guess, invent, or hallucinate file names (such as 'Filler_Machine_Assignment.pdf', 'assignment.pdf', 'doc.pdf'). "
+                "If the user asks about document contents, use search_knowledge_base to check indexed knowledge or ask the user to load the file via '/load <path>'.\n\n"
             )
 
         return (
@@ -322,21 +343,25 @@ class Assistant:
             f"{facts_block}\n\n"
             f"{active_doc_block}"
             "Capabilities and Available Tools:\n"
-            "- web_search: Search the live web for recent developments, documentation, and factual verification.\n"
-            "- code_executor: Run Python code in an isolated sandbox for math, data analysis, and script verification.\n"
+            "- web_search: Search DuckDuckGo for live web information, current events, and fresh documentation.\n"
+            "- code_executor: Run Python code in an isolated sandbox for math, data analysis, sorting, and script verification.\n"
             "- read_pdf: Inspect local PDF files to obtain metadata and document overviews.\n"
             "- read_pdf_page: Read specific pages of a local PDF document in detail.\n"
-            "- search_knowledge_base: Query the internal vector store for indexed documents and notes.\n\n"
-            "Operating Rules:\n"
-            f"1. When interpreting time-sensitive terms ('latest', 'recent', 'current', 'today', 'this year'), "
+            "- search_knowledge_base: Query the internal ChromaDB vector store for indexed documents and notes.\n\n"
+            "Tool Selection and Operating Rules:\n"
+            "1. Web Search Discipline: Avoid calling web_search for general conceptual, historical, foundational, or programming questions "
+            "(e.g., 'What is RAG?', 'Explain Python dictionaries', 'How does TCP handshake work?'). Answer these directly from foundational knowledge. "
+            "Call web_search ONLY when the user explicitly requests web search or when fresh, current real-time data is genuinely required.\n"
+            f"2. Runtime Date Awareness: When interpreting time-sensitive terms ('latest', 'recent', 'current', 'today', 'this year', '2026'), "
             f"strictly use the current runtime date ({current_date_str}) and year ({current_year}). "
             f"Never assume or hardcode outdated years (such as 2024 or 2025) into search queries or answers.\n"
-            "2. When answering questions, use any personal context and facts above to tailor your response.\n"
-            "3. DO NOT explicitly reference 'my database', 'stored memory', or 'system records'. Respond naturally.\n"
-            "4. Use tools whenever external facts, live data, calculations, or document inspections are required.\n"
-            "5. Never fabricate or invent tool outputs. Ground all claims strictly on tool observations.\n"
-            "6. If a tool reports an error or returns empty results, reason through alternative strategies or clearly inform the user.\n"
-            "7. Provide clear, concise, and structured answers."
+            "3. Document and RAG Discipline: Never fabricate, invent, or guess PDF filenames (e.g. do not invent 'Filler_Machine_Assignment.pdf'). "
+            "If a document is loaded, use the active document path or search_knowledge_base. "
+            "Do not make redundant or repetitive tool calls once sufficient context has been retrieved. If search_knowledge_base or read_pdf returned relevant content, synthesize your response without calling additional file tools.\n"
+            "4. Personal Context: Use stored facts naturally without explicitly referencing 'my database', 'stored memory', or 'system records'.\n"
+            "5. Tool Grounding: Ground all claims strictly on actual tool observations. Never fabricate tool outputs.\n"
+            "6. Error Recovery: If a tool reports an error or returns empty results, do not loop through speculative calls; reason cleanly or inform the user.\n"
+            "7. Clarity: Provide structured, concise, and clear answers."
         )
 
     def _update_memory(self, user_message: str, assistant_message: str) -> None:
