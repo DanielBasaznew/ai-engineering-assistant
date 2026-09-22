@@ -4,7 +4,10 @@ Provides whole-document overview extraction and single-page fetching using PyMuP
 """
 
 import os
-import fitz  # PyMuPDF library
+try:
+    import pymupdf as fitz  # Modern PyMuPDF import
+except ImportError:
+    import fitz  # Legacy fallback
 
 
 def read_pdf(file_path: str) -> str:
