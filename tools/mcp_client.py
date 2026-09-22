@@ -1,6 +1,7 @@
 """
 MCP (Model Context Protocol) Client Integration.
 Connects the Assistant to the Week 8 Enhanced MCP Server via stdio JSON-RPC transport.
+Supports repository inspection (explain_repository), code analysis, and mathematical computations.
 """
 
 import asyncio
