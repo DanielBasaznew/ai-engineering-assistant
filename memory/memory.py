@@ -1,5 +1,6 @@
 import datetime
 import sqlite3
+from contextlib import contextmanager
 from rich.console import Console
 from rich.table import Table
 
@@ -12,8 +13,13 @@ class PersistentMemory:
     self.db_path = db_path
     self._init_db()
 
+  @contextmanager
   def _get_connection(self):
-    return sqlite3.connect(self.db_path)
+    conn = sqlite3.connect(self.db_path)
+    try:
+      yield conn
+    finally:
+      conn.close()
 
   def _init_db(self):
     """Creates tables for facts (Semantic Memory) and conversation_log (Episodic Memory),
