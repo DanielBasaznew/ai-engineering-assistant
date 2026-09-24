@@ -17,6 +17,7 @@ opentelemetry-sdk>=1.30.0
 chromadb>=1.5.0
 pymupdf>=1.25.0
 pypdf>=5.0.0
+tiktoken>=0.8.0
 
 # Caching & Local Embedding
 sentence-transformers>=3.0.0
