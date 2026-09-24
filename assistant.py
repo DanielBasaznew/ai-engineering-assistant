@@ -99,7 +99,7 @@ class Assistant:
             raise ValueError("GEMINI_API_KEY not found in environment variables.")
 
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = model_name
+        self.model_name = os.getenv("GEMINI_MODEL", model_name)
         self.rag_collection = rag_collection
 
         # Initialize Persistent Memory (Semantic facts + Episodic turns)
@@ -555,9 +555,16 @@ class Assistant:
                 )
             except errors.APIError as e:
                 err_str = str(e)
-                if getattr(e, "code", None) == 429 or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                is_transient = (
+                    getattr(e, "code", None) in (429, 503)
+                    or "429" in err_str
+                    or "503" in err_str
+                    or "RESOURCE_EXHAUSTED" in err_str
+                    or "UNAVAILABLE" in err_str
+                )
+                if is_transient:
                     log.warning(
-                        f"Rate limit reached (429). Retrying in {delay}s (Attempt {attempt+1}/{max_retries})...",
+                        f"Transient Gemini API error ({getattr(e, 'code', 'error')}). Retrying in {delay}s (Attempt {attempt+1}/{max_retries})...",
                         extra={"attempt": attempt + 1, "delay_s": delay},
                     )
                     time.sleep(delay)

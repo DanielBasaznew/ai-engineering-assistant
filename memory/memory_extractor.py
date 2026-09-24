@@ -63,7 +63,7 @@ def extract_facts_from_conversation(
         prompt = SYSTEM_PROMPT.format(existing_facts=existing_facts_formatted)
 
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
+            model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
             contents=f"{prompt}\n\nUser Message: {user_message}",
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
