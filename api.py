@@ -192,12 +192,9 @@ def chat_endpoint(chat_request: ChatRequest, request: Request) -> ChatResponse:
             "Request blocked by input guardrail at API layer",
             extra={"reason": validation.reason, "client_ip": client_ip},
         )
-        cost_summary = current_assistant.get_cost_summary()
-        return ChatResponse(
-            response=f"[BLOCKED] {validation.reason}",
-            status="blocked",
-            cost=cost_summary,
-            cost_report=cost_summary,
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"[BLOCKED] {validation.reason}",
         )
 
     # 3. assistant.chat()
