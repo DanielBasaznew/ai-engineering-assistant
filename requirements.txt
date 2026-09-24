@@ -1,0 +1,30 @@
+# Core Web & API Framework
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic>=2.10.0
+python-dotenv>=1.0.0
+python-multipart>=0.0.9
+
+# Gemini SDK & GenAI
+google-genai>=2.24.0
+
+# Telemetry, Observability & Tracing
+langfuse>=4.15.0
+opentelemetry-api>=1.30.0
+opentelemetry-sdk>=1.30.0
+
+# Vector Database & Retrieval (RAG)
+chromadb>=1.5.0
+pymupdf>=1.25.0
+pypdf>=5.0.0
+
+# Caching & Local Embedding
+sentence-transformers>=3.0.0
+cachetools>=5.5.0
+torch>=2.2.0
+
+# Autonomous Agent Tools
+duckduckgo_search>=7.0.0
+rich>=13.9.0
+mcp>=1.2.0
+tenacity>=9.0.0
