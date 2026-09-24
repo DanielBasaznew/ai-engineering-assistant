@@ -6,11 +6,15 @@ try:
     from rag.vector_store import get_collection, add_documents
     from rag.chunker import chunk_by_tokens, chunk_by_paragraph
 except ImportError:
-    from vector_store import get_collection, add_documents
     try:
-        from chunker import chunk_by_tokens, chunk_by_paragraph
-    except ImportError:
-        from chunking import chunk_by_tokens, chunk_by_paragraph
+        from .vector_store import get_collection, add_documents
+        from .chunker import chunk_by_tokens, chunk_by_paragraph
+    except (ImportError, ValueError):
+        from vector_store import get_collection, add_documents
+        try:
+            from chunker import chunk_by_tokens, chunk_by_paragraph
+        except ImportError:
+            from chunking import chunk_by_tokens, chunk_by_paragraph
 
 BATCH_SIZE = 100  # Safe batch size to avoid memory strain or SQLite limits
 
